@@ -1,0 +1,10 @@
+apiVersion: data-platform.qonto.co/v1alpha1
+kind: WebPage
+metadata:
+  name: example-webpage
+  namespace: default
+spec:
+  content: "Welcome to my website!"
+  image: "nginx:1.21"
+  replicas: 2
+
