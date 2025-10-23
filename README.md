@@ -291,12 +291,16 @@ The reconciler is the heart of your operator. It implements the control loop pat
    }
    
    // 3. Reconciliation logic goes here
-   // - Create/update Deployments based on wp.Spec
+   // - Create/update ConfigMap with website content
+   // - Create/update Deployment with nginx mounting the ConfigMap
+   // - Create/update Service to expose the Deployment
+   // - Create/update Ingress to route external traffic
    // - Update wp.Status with current state
-   // - Handle any child resources (Services, Ingresses, etc.)
    
    return ctrl.Result{}, nil
    ```
+
+   > **Note**: The `controllers/webpage/controller.go` file contains detailed commented code showing exactly how to implement each step of the reconciliation for a complete nginx-based web server with ConfigMap, Deployment, Service, and Ingress resources. Uncomment and adapt this code to create a fully functional operator.
 
    **Return Values**:
    - `ctrl.Result{}`: Reconciliation successful, don't requeue
@@ -561,17 +565,115 @@ if !controllerutil.ContainsFinalizer(obj, finalizerName) {
 }
 ```
 
+## Complete Reconciliation Flow (Implementation Guide)
+
+The `controllers/webpage/controller.go` file contains detailed commented code for implementing a complete reconciliation loop. Here's what each step does:
+
+### Step-by-Step Reconciliation
+
+1. **Fetch the WebPage Resource**
+   - Get the WebPage object from the API server
+   - Handle "not found" errors (resource was deleted)
+   - Return any other errors for retry
+
+2. **Update Status to Pending**
+   - Initialize the status.phase field if empty
+   - Set it to "Pending" while resources are being created
+
+3. **Create/Update ConfigMap**
+   - Name: `{webpage-name}-content`
+   - Stores the `spec.content` as `index.html`
+   - Uses `controllerutil.CreateOrUpdate()` for idempotent operations
+   - Sets owner reference for automatic cleanup
+
+4. **Create/Update Deployment**
+   - Runs nginx container with the specified image
+   - Mounts the ConfigMap as a volume to `/usr/share/nginx/html`
+   - Uses replicas from spec (defaults to 1)
+   - Adds proper labels for Service selector matching
+   - Sets owner reference
+
+5. **Create/Update Service**
+   - Name: `{webpage-name}-service`
+   - Type: ClusterIP (internal only, exposed via Ingress)
+   - Port 80, targeting the Deployment's nginx containers
+   - Selector matches Deployment labels
+
+6. **Create/Update Ingress**
+   - Name: `{webpage-name}-ingress`
+   - Host: `{webpage-name}.example.com` (or custom domain)
+   - Routes all traffic (path: `/`) to the Service
+   - Optional TLS configuration
+   - Ingress controller annotations can be added
+
+7. **Check Deployment Status**
+   - Fetch the Deployment to check readiness
+   - Compare ReadyReplicas vs desired Replicas
+   - Update WebPage status.phase to "Running" when ready
+   - Keep as "Pending" if not ready yet
+
+8. **Requeue for Periodic Checks**
+   - Optional: Requeue after 30 seconds
+   - Ensures status stays current even if events are missed
+
+### Resource Relationships
+
+```
+WebPage (CR)
+│
+├─► ConfigMap ({name}-content)
+│   └── index.html: spec.content
+│
+├─► Deployment ({name})
+│   └── Pod Template
+│       ├── Container: nginx
+│       │   ├── Image: spec.image (or nginx:latest)
+│       │   └── VolumeMount: /usr/share/nginx/html
+│       └── Volume: configmap/{name}-content
+│
+├─► Service ({name}-service)
+│   └── Selector: app={name}
+│       └── Port: 80 → Pod:80
+│
+└─► Ingress ({name}-ingress)
+    └── Host: {name}.example.com
+        └── Path: / → Service:{name}-service:80
+```
+
+### Owner References
+
+All child resources (ConfigMap, Deployment, Service, Ingress) have an owner reference pointing to the WebPage resource. This means:
+- When the WebPage is deleted, all child resources are automatically deleted (garbage collection)
+- Kubernetes knows the relationship between resources
+- Status changes in child resources can trigger reconciliation of the parent
+
+### Implementing the Code
+
+To implement the full operator:
+1. Open `controllers/webpage/controller.go`
+2. Uncomment the code blocks in the `Reconcile()` function
+3. Add the required imports at the top of the file
+4. Uncomment the `.Owns()` calls in `SetupWithManager()` to watch child resources
+5. Run `go mod tidy` to ensure all dependencies are available
+6. Test with the example WebPage resource
+
+Required imports to add:
+```go
+appsv1 "k8s.io/api/apps/v1"
+corev1 "k8s.io/api/core/v1"
+networkingv1 "k8s.io/api/networking/v1"
+metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+"k8s.io/apimachinery/pkg/types"
+"k8s.io/apimachinery/pkg/util/intstr"
+"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+"time"
+```
+
 ## Next Steps
 
-To extend this operator into a fully functional web server manager:
+After implementing the basic reconciliation logic (see section above), consider these enhancements:
 
-1. **Implement Full Reconciliation Logic**:
-   - Create a Deployment based on the WebPage spec
-   - Create a Service to expose the Deployment
-   - Create a ConfigMap with the content
-   - Update WebPage status with phase and conditions
-
-2. **Add More Fields**:
+1. **Add More Fields**:
    ```go
    type WebPageSpec struct {
        Content   string            `json:"content"`
@@ -584,36 +686,35 @@ To extend this operator into a fully functional web server manager:
    }
    ```
 
-3. **Add Status Conditions**:
+2. **Add Status Conditions**:
    ```go
    type WebPageStatus struct {
        Phase      WebPhase           `json:"phase"`
        Conditions []metav1.Condition `json:"conditions,omitempty"`
        URL        string             `json:"url,omitempty"`
+       ReadyReplicas int             `json:"readyReplicas,omitempty"`
    }
    ```
 
-4. **Watch Child Resources**:
-   ```go
-   ctrl.NewControllerManagedBy(mgr).
-       For(&v1alpha1.WebPage{}).
-       Owns(&appsv1.Deployment{}).
-       Owns(&corev1.Service{}).
-       Complete(r)
-   ```
-
-5. **Add Validation Webhooks**:
+3. **Add Validation Webhooks**:
    - Validate spec fields before allowing creation
    - Prevent invalid updates
+   - Example: ensure content is not empty, replicas > 0
 
-6. **Add Conversion Webhooks**:
+4. **Add Conversion Webhooks**:
    - Support multiple API versions (v1alpha1, v1beta1, v1)
+   - Automatically convert between versions
 
-7. **Add Metrics and Health Checks**:
+5. **Add Metrics and Health Checks**:
    - Expose Prometheus metrics
    - Add health and ready endpoints
+   - Monitor reconciliation performance
 
-8. **Testing**:
+6. **Implement Finalizers**:
+   - Clean up external resources on deletion
+   - Prevent accidental deletion
+
+7. **Testing**:
    - Unit tests for reconciliation logic
    - Integration tests with envtest
    - E2E tests on real clusters
