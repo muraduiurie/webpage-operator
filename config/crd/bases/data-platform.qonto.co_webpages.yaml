@@ -1,0 +1,77 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: webpages.data-platform.qonto.co
+spec:
+  group: data-platform.qonto.co
+  names:
+    kind: WebPage
+    listKind: WebPageList
+    plural: webpages
+    shortNames:
+    - web
+    singular: webpage
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Status
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: WebPage represents the web pod, pvc and ingress subresources
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: WebPageSpec defines the desired state of the website
+            properties:
+              content:
+                description: Content is the static content exposed by our website
+                type: string
+              image:
+                description: Image is the docker image used to expose the content
+                  of our website
+                type: string
+              replicas:
+                description: Replicas defines the number of running pods of our website
+                type: integer
+            required:
+            - content
+            type: object
+          status:
+            description: WebPageStatus represents the observed state of our website
+            properties:
+              phase:
+                description: Phase is the actual state of our website
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
